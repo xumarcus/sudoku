@@ -224,8 +224,10 @@ mod core {
     }
 }
 
-#[cfg(tests)]
+#[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn simple_sudoku() {
         let sudoku: Sudoku = "\
@@ -237,8 +239,10 @@ mod tests {
         200000530
         302109080
         060004913
-        197030004"
-            .parse();
+        197030004
+        "
+        .parse()
+        .unwrap();
         assert_eq!(
             sudoku.to_string(),
             "\
@@ -255,6 +259,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn inferrable_sudoku() {
         let sudoku: Sudoku = "\
         090000830
@@ -265,8 +270,10 @@ mod tests {
         905060000
         000700900
         000004006
-        170000005"
-            .parse();
+        170000005
+        "
+        .parse()
+        .unwrap();
         assert_eq!(
             sudoku.to_string(),
             "\
@@ -283,6 +290,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn arto_inkala() {
         let sudoku: Sudoku = "\
         800000000
@@ -295,7 +303,8 @@ mod tests {
         008500010
         090000400
         "
-        .parse();
+        .parse()
+        .unwrap();
         assert_eq!(
             sudoku.to_string(),
             "\
@@ -311,9 +320,8 @@ mod tests {
         "
         );
         assert_eq!(
-            sudoku.backtrack().and_then(Sudoku::to_string),
-            Some(
-                "\
+            sudoku.backtrack().unwrap().to_string(),
+            "\
         812753649
         943682175
         675491283
@@ -324,7 +332,6 @@ mod tests {
         438526917
         796318452
         "
-            )
         );
     }
 }
