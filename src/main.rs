@@ -1,4 +1,4 @@
-use std::array::IntoIter;
+use std::collections::VecDeque;
 use std::env;
 use std::io;
 use std::io::Read;
@@ -7,11 +7,19 @@ use std::str::FromStr;
 use thiserror::Error;
 
 type Bits = usize;
+type Arcs = [[[usize; N2]; N1]; N4];
 
 const N1: usize = 3;
 const N2: usize = N1 * N1;
 const N4: usize = N2 * N2;
 const ALL_BITS: Bits = (1 << N2) - 1;
+const ARCS: Arcs = crate::core::arcs_init();
+
+enum ConstraintType {
+    Block,
+    Row,
+    Col,
+}
 
 #[derive(Clone, Debug, Error)]
 #[error("No solution")]
@@ -32,7 +40,10 @@ impl FromStr for Sudoku {
 impl Sudoku {
     fn set(&mut self, idx: usize, digit: usize) -> Option<()> {
         self.0[idx] = 1 << digit;
-        
+        let mut queue = std::iter::once(idx).collect::<VecDeque<usize>>();
+        while let Some(cur) = queue.pop_front() {
+            for indices in ARCS[cur] {}
+        }
     }
 
     pub fn new(it: impl Iterator<Item = u8>) -> Option<Self> {
@@ -67,46 +78,88 @@ impl Sudoku {
     }
 }
 
-fn dfs(u: &[Bits; N2], idx: usize, x_of: &mut [usize; N2], mut vis: Bits) -> bool {
-    vis |= 1 << idx;
-    let u_i = unsafe { *u.get_unchecked(idx) };
-    for i in 0..N2 {
-        if u_i & (1 << i) == 0 {
-            continue;
+mod core {
+    use crate::*;
+
+    pub const fn arcs_init() -> Arcs {
+        let mut arcs = [[[0; N2]; N1]; N4];
+        let mut blocks = [[0; N2]; N2];
+        let mut i = 0;
+        while i < N1 {
+            let mut j = 0;
+            while j < N1 {
+                let mut k = 0;
+                while k < N1 {
+                    let mut l = 0;
+                    while l < N1 {
+                        blocks[i * N1 + j][k * N1 + l] = (i * N2 + j) * N1 + k * N2 + l;
+                        l += 1;
+                    }
+                    k += 1;
+                }
+                j += 1;
+            }
+            i += 1;
         }
-        if unsafe { *x_of.get_unchecked(i) } != N2 {
-            if vis & (1 << i) != 0 || !dfs(u, i, x_of, vis) {
+        let mut i = 0;
+        while i < N2 {
+            let mut j = 0;
+            while j < N2 {
+                arcs[i * N2 + j][ConstraintType::Block as usize] = blocks[(i % N1) * N1 + (j % N1)];
+                let mut k = 0;
+                while k < N2 {
+                    arcs[i * N2 + j][ConstraintType::Row as usize][k] = i * N2 + k;
+                    arcs[i * N2 + j][ConstraintType::Col as usize][k] = k * N2 + j;
+                    k += 1;
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+        arcs
+    }
+
+    pub fn dfs(u: &[Bits; N2], idx: usize, x_of: &mut [usize; N2], mut vis: Bits) -> bool {
+        vis |= 1 << idx;
+        let u_i = unsafe { *u.get_unchecked(idx) };
+        for i in 0..N2 {
+            if u_i & (1 << i) == 0 {
                 continue;
             }
-        }
-        unsafe {
-            *x_of.get_unchecked_mut(i) = idx;
-        }
-        return true;
-    }
-    false
-}
-
-fn kuhn(u: &[Bits; N2]) -> Option<[usize; N2]> {
-    let mut x_of = [N2; N2];
-    dfs(&u, 0, &mut x_of, 0);
-    dfs(&u, 1, &mut x_of, 0);
-    dfs(&u, 2, &mut x_of, 0);
-    dfs(&u, 3, &mut x_of, 0);
-    dfs(&u, 4, &mut x_of, 0);
-    dfs(&u, 5, &mut x_of, 0);
-    dfs(&u, 6, &mut x_of, 0);
-    dfs(&u, 7, &mut x_of, 0);
-    dfs(&u, 8, &mut x_of, 0);
-    x_of.iter().all(|z| *z != N2).then(|| {
-        let mut y_of = [0usize; N2];
-        for (i, z) in x_of.iter().enumerate() {
-            unsafe {
-                *y_of.get_unchecked_mut(*z) = i;
+            if unsafe { *x_of.get_unchecked(i) } != N2 {
+                if vis & (1 << i) != 0 || !dfs(u, i, x_of, vis) {
+                    continue;
+                }
             }
+            unsafe {
+                *x_of.get_unchecked_mut(i) = idx;
+            }
+            return true;
         }
-        y_of
-    })
+        false
+    }
+
+    pub fn kuhn(u: &[Bits; N2]) -> Option<[usize; N2]> {
+        let mut x_of = [N2; N2];
+        dfs(&u, 0, &mut x_of, 0);
+        dfs(&u, 1, &mut x_of, 0);
+        dfs(&u, 2, &mut x_of, 0);
+        dfs(&u, 3, &mut x_of, 0);
+        dfs(&u, 4, &mut x_of, 0);
+        dfs(&u, 5, &mut x_of, 0);
+        dfs(&u, 6, &mut x_of, 0);
+        dfs(&u, 7, &mut x_of, 0);
+        dfs(&u, 8, &mut x_of, 0);
+        x_of.iter().all(|z| *z != N2).then(|| {
+            let mut y_of = [0usize; N2];
+            for (i, z) in x_of.iter().enumerate() {
+                unsafe {
+                    *y_of.get_unchecked_mut(*z) = i;
+                }
+            }
+            y_of
+        })
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
