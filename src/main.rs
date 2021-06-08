@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::env;
 use std::fmt::{self, Display};
 use std::io::{self, Read};
-use std::str::FromStr;
+use std::str::{self, FromStr};
 
 use strum::EnumCount;
 use thiserror::Error;
@@ -42,22 +42,17 @@ impl FromStr for Sudoku {
 impl Display for Sudoku {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for chunk in self.0.chunks_exact(N2) {
-            let s = chunk
+            let buf = chunk
                 .iter()
-                .map(|mask| match mask {
-                    1 => '1',
-                    2 => '2',
-                    4 => '3',
-                    8 => '4',
-                    16 => '5',
-                    32 => '6',
-                    64 => '7',
-                    128 => '8',
-                    256 => '9',
-                    _ => '.',
+                .map(|val| match val {
+                    0 => unreachable!(),
+                    bit if bit.next_power_of_two() == *bit => b'1' + bit.trailing_zeros() as u8,
+                    _ => b'.',
                 })
-                .collect::<String>();
-            writeln!(f, "{}", s)?;
+                .collect::<Vec<u8>>();
+            if let Ok(s) = str::from_utf8(&buf) {
+                writeln!(f, "{}", s)?;
+            }
         }
         Ok(())
     }
