@@ -1,9 +1,8 @@
-use std::convert::TryInto;
 use std::array::IntoIter;
 use std::env;
 use std::io;
 use std::io::Read;
-use std::str;
+use std::str::FromStr;
 
 use thiserror::Error;
 
@@ -13,28 +12,41 @@ const N4: usize = N2 * N2;
 
 #[derive(Clone, Debug, Error)]
 #[error("81 digits expected")]
-struct ParseSudokuError;
+struct SudokuError;
 
 #[derive(Clone, Debug)]
 struct Sudoku([usize; N4]);
 
 type Bits = usize;
 
-impl str::FromStr for Sudoku {
-    type Err = ParseSudokuError;
+impl FromStr for Sudoku {
+    type Err = SudokuError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.chars()
-        .filter(char::is_ascii_digit)
-        .take(N4)
-        .map(|d| match d as u8 - b'0' {
-            0 => 0x111111111,
-            x => 1 << x,
-        })
-        .collect::<Vec<Bits>>()
-        .try_into()
-        .map(Sudoku)
-        .map_err(|_| ParseSudokuError)
+        Sudoku::try_collect(
+            s.chars()
+                .filter(char::is_ascii_digit)
+                .take(N4)
+                .map(|d| d as u8),
+        )
+    }
+}
+
+impl Sudoku {
+    #[inline]
+    fn set(&mut self, idx: usize, digit: usize) -> Result<(), SudokuError> {
+        
+    }
+
+    fn try_collect(it: impl Iterator<Item = u8>) -> Result<Self, SudokuError> {
+        let mut sudoku = Sudoku([(1 << N2) - 1; N4]);
+        for (idx, digit) in it.enumerate() {
+            if digit != b'0' {
+                sudoku[idx] = 1 << (digit - b'0');
+                sudoku.enforce_GAC(idx)?;
+            }
+        }
+        Ok(sudoku)
     }
 }
 
@@ -50,7 +62,9 @@ fn dfs(u: &[Bits; N2], idx: usize, x_of: &mut [usize; N2], mut vis: Bits) -> boo
                 continue;
             }
         }
-        unsafe { *x_of.get_unchecked_mut(i) = idx; }
+        unsafe {
+            *x_of.get_unchecked_mut(i) = idx;
+        }
         return true;
     }
     false
@@ -67,19 +81,37 @@ fn kuhn(u: &[Bits; N2]) -> Option<[usize; N2]> {
     dfs(&u, 6, &mut x_of, 0);
     dfs(&u, 7, &mut x_of, 0);
     dfs(&u, 8, &mut x_of, 0);
-    if x_of.iter().all(|z| *z != N2) {
+    x_of.iter().all(|z| *z != N2).then(|| {
         let mut y_of = [0usize; N2];
         for (i, z) in x_of.iter().enumerate() {
-            unsafe { *y_of.get_unchecked_mut(*z) = i; }
+            unsafe {
+                *y_of.get_unchecked_mut(*z) = i;
+            }
         }
-        Some(y_of)
-    } else {
-        None
-    }
+        y_of
+    })
 }
 
-fn gac_enforce(sudoku: &mut Sudoku, idx: usize) -> Vec<usize> {
-    vec![]
+// In theory with GAC BT should be less often
+fn solve(sudoku: Sudoku) -> Option<Sudoku> {
+    sudoku
+        .0
+        .iter()
+        .enumerate()
+        .find(|(_, val)| val.next_power_of_two() != **val)
+        .and_then(|(idx, val)| {
+            (0..N2)
+                .filter_map(|i| {
+                    // Workaround
+                    (val & (1 << i) != 0).then(|| ()).and_then(|_| {
+                        let mut cl = sudoku.clone();
+                        cl.0[idx] = 1 << i;
+                        enforce_GAC(&mut cl, idx);
+                        solve(cl)
+                    })
+                })
+                .next()
+        })
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -92,7 +124,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             stdin.read_to_string(&mut buf)?;
             buf
         }
-    }.parse::<Sudoku>()?;
+    }
+    .parse::<Sudoku>()?;
     for (idx, bits) in IntoIter::new(sudoku.0).enumerate() {
         gac_enforce(&mut sudoku, idx);
     }
