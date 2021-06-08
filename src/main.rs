@@ -106,7 +106,7 @@ impl Sudoku {
 }
 
 mod core {
-    use crate::*;
+    use super::*;
 
     pub const fn arcs_init() -> Arcs {
         let mut arcs = [[[0; N2]; N1]; N4];
@@ -227,6 +227,111 @@ mod core {
     }
 }
 
+#[cfg(tests)]
+mod tests {
+    #[test]
+    fn simple_sudoku() {
+        let sudoku: Sudoku = "\
+        920008000
+        403062890
+        801003720
+        004000100
+        080020079
+        200000530
+        302109080
+        060004913
+        197030004"
+            .parse();
+        assert_eq!(
+            sudoku.to_string(),
+            "\
+        926718345
+        473562891
+        851493726
+        734985162
+        685321479
+        219647538
+        342159687
+        568274913
+        197836254
+        "
+        );
+    }
+
+    fn inferrable_sudoku() {
+        let sudoku: Sudoku = "\
+        090000830
+        003600040
+        008000000
+        200090000
+        000438000
+        905060000
+        000700900
+        000004006
+        170000005"
+            .parse();
+        assert_eq!(
+            sudoku.to_string(),
+            "\
+        697245831
+        513689247
+        428371659
+        234597168
+        761438592
+        985162374
+        842756913
+        359814726
+        176923485
+        "
+        );
+    }
+
+    fn arto_inkala() {
+        let sudoku: Sudoku = "\
+        800000000
+        003600000
+        070090200
+        050007000
+        000045700
+        000100030
+        001000068
+        008500010
+        090000400
+        "
+        .parse();
+        assert_eq!(
+            sudoku.to_string(),
+            "\
+        8........
+        ..36.....
+        .7..9.2..
+        .5...7...
+        ....457..
+        ...1...3.
+        ..1....68
+        ..85...1.
+        .9....4..
+        "
+        );
+        assert_eq!(
+            sudoku.backtrack().and_then(Sudoku::to_string),
+            Some(
+                "\
+        812753649
+        943682175
+        675491283
+        154237896
+        369845721
+        287169534
+        521974368
+        438526917
+        796318452
+        "
+            )
+        );
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sudoku = match env::args().skip(1).next() {
         Some(s) => s,
@@ -239,8 +344,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     .parse::<Sudoku>()?;
+    println!("Before backtracking:\n{}", sudoku);
     if let Some(solved) = sudoku.backtrack() {
-        println!("{}", solved);
+        println!("After backtracking:\n{}", solved);
     }
     Ok(())
 }
