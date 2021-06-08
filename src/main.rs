@@ -149,16 +149,19 @@ mod core {
         queue: &mut VecDeque<usize>,
     ) -> Option<()> {
         let mut u_1 = [0usize; N2];
-        for (i, x) in u.iter().enumerate() {
+        for (i, z) in u.iter().enumerate() {
             for k in 0..N2 {
                 let bit = 1 << k;
-                if u_1[i] & bit == 0 && x & bit != 0 {
+                if u_1[i] & bit == 0 && z & bit != 0 {
                     let mut u_p = u.clone();
                     u_p[i] = bit;
-                    if let Some(y_of) = crate::core::kuhn(&u_p) {
-                        for (j, y) in y_of.iter().enumerate() {
-                            u_1[j] |= 1 << y;
+                    if let Some(x_of) = crate::core::kuhn(&u_p) {
+                        for (y, x) in x_of.iter().enumerate() {
+                            u_1[*x] |= 1 << y;
                         }
+                        println!("Ok  {:?} has {:?}", u_p, y_of(&x_of));
+                    } else {
+                        println!("Err {:?}", u_p);
                     }
                 }
             }
@@ -180,11 +183,12 @@ mod core {
         let u_i = u[idx]; /* unsafe { *u.get_unchecked(idx) }; */
         for i in 0..N2 {
             /* unsafe { *x_of.get_unchecked(i) } */
-            if u_i & (1 << i) != 0
-                && (x_of[i] != N2 || (vis & (1 << i) == 0 && dfs(u, i, x_of, vis)))
-            {
-                x_of[i] = idx; /* unsafe { *x_of.get_unchecked_mut(i) = idx; } */
-                return true;
+            if u_i & (1 << i) != 0 {
+                let x = x_of[i];
+                if x == N2 || (vis & (1 << x) == 0 && dfs(u, x, x_of, vis)) {
+                    x_of[i] = idx;
+                    return true;
+                }
             }
         }
         false
@@ -201,16 +205,19 @@ mod core {
         dfs(&u, 6, &mut x_of, 0);
         dfs(&u, 7, &mut x_of, 0);
         dfs(&u, 8, &mut x_of, 0);
-        x_of.iter().all(|z| *z != N2).then(|| {
-            let mut y_of = [0usize; N2];
-            for (i, z) in x_of.iter().enumerate() {
-                /* unsafe {
-                    *y_of.get_unchecked_mut(*z) = i;
-                } */
-                y_of[*z] = i;
-            }
-            y_of
-        })
+        Some(x_of).filter(|x| x.iter().all(|z| *z != N2))
+    }
+
+    #[allow(dead_code)]
+    fn y_of(x_of: &[usize; N2]) -> [usize; N2] {
+        let mut y_of = [0usize; N2];
+        for (i, z) in x_of.iter().enumerate() {
+            /* unsafe {
+                *y_of.get_unchecked_mut(*z) = i;
+            } */
+            y_of[*z] = i;
+        }
+        y_of
     }
 }
 
