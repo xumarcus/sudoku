@@ -9,7 +9,7 @@
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceRoot}/target/debug/sudoku.exe",
-            "args": [],
+            "args": ["920008000403062890801003720004000100080020079200000530302109080060004913197030004"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],

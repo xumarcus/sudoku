@@ -4,22 +4,24 @@ use std::io;
 use std::io::Read;
 use std::str::FromStr;
 
+use strum::EnumCount;
 use thiserror::Error;
 
+#[derive(strum_macros::EnumCount)]
+enum ConstraintType {
+    Block,
+    Row,
+    Col,
+}
+
 type Bits = usize;
-type Arcs = [[[usize; N2]; N1]; N4];
+type Arcs = [[[usize; N2]; ConstraintType::COUNT]; N4];
 
 const N1: usize = 3;
 const N2: usize = N1 * N1;
 const N4: usize = N2 * N2;
 const ALL_BITS: Bits = (1 << N2) - 1;
 const ARCS: Arcs = crate::core::arcs_init();
-
-enum ConstraintType {
-    Block,
-    Row,
-    Col,
-}
 
 #[derive(Clone, Debug, Error)]
 #[error("No solution")]
@@ -39,19 +41,25 @@ impl FromStr for Sudoku {
 
 impl Sudoku {
     fn set(&mut self, idx: usize, digit: usize) -> Option<()> {
-        self.0[idx] = 1 << digit;
-        let mut queue = std::iter::once(idx).collect::<VecDeque<usize>>();
-        while let Some(cur) = queue.pop_front() {
-            for indices in ARCS[cur] {}
-        }
+        let bit = 1 << digit;
+        (self.0[idx] & bit != 0).then(|| {
+            self.0[idx] = bit;
+            let mut queue = std::iter::once(idx).collect::<VecDeque<usize>>();
+            while let Some(cur) = queue.pop_front() {
+                for indices in ARCS[cur].iter() {
+                    let u = crate::core::from_indices(&self.0, indices);
+                    crate::core::enforce(&u, indices, &mut self.0, &mut queue)?;
+                }
+            }
+            Some(())
+        })?
     }
 
     pub fn new(it: impl Iterator<Item = u8>) -> Option<Self> {
         let mut sudoku = Sudoku([ALL_BITS; N4]);
         for (idx, chr) in it.enumerate() {
-            let digit = (chr - b'0') as usize;
-            if digit != 0 {
-                sudoku.set(idx, digit)?;
+            if chr != b'0' {
+                sudoku.set(idx, (chr - b'1') as usize)?;
             }
         }
         Some(sudoku)
@@ -65,13 +73,11 @@ impl Sudoku {
             .and_then(|(idx, val)| {
                 (0..N2)
                     .filter_map(|i| {
-                        (val & (1 << i) != 0)
-                            .then(|| {
-                                let mut clone = self.clone();
-                                clone.set(idx, i)?;
-                                clone.solve()
-                            })
-                            .flatten()
+                        (val & (1 << i) != 0).then(|| {
+                            let mut clone = self.clone();
+                            clone.set(idx, i)?;
+                            clone.solve()
+                        })?
                     })
                     .next()
             })
@@ -119,27 +125,72 @@ mod core {
         arcs
     }
 
-    pub fn dfs(u: &[Bits; N2], idx: usize, x_of: &mut [usize; N2], mut vis: Bits) -> bool {
-        vis |= 1 << idx;
-        let u_i = unsafe { *u.get_unchecked(idx) };
-        for i in 0..N2 {
-            if u_i & (1 << i) == 0 {
-                continue;
+    // No generic parameter: RFC 2000 #44580
+    pub fn from_indices<T: Copy + Default>(buf: &[T], indices: &[usize; N2]) -> [T; N2] {
+        // Skip frequent bound-checking
+        /* unsafe {
+            let mut new_buf: [T; N2] = std::mem::zeroed();
+            for (i, idx) in indices.iter().enumerate() {
+                *new_buf.get_unchecked_mut(i) = *buf.get_unchecked(*idx);
             }
-            if unsafe { *x_of.get_unchecked(i) } != N2 {
-                if vis & (1 << i) != 0 || !dfs(u, i, x_of, vis) {
-                    continue;
+            new_buf
+        } */
+        let mut new_buf = [T::default(); N2];
+        for (i, idx) in indices.iter().enumerate() {
+            new_buf[i] = buf[*idx];
+        }
+        new_buf
+    }
+
+    pub fn enforce(
+        u: &[Bits; N2],
+        indices: &[usize; N2],
+        data: &mut [Bits; N4],
+        queue: &mut VecDeque<usize>,
+    ) -> Option<()> {
+        let mut u_1 = [0usize; N2];
+        for (i, x) in u.iter().enumerate() {
+            for k in 0..N2 {
+                let bit = 1 << k;
+                if u_1[i] & bit == 0 && x & bit != 0 {
+                    let mut u_p = u.clone();
+                    u_p[i] = bit;
+                    if let Some(y_of) = crate::core::kuhn(&u_p) {
+                        for (j, y) in y_of.iter().enumerate() {
+                            u_1[j] |= 1 << y;
+                        }
+                    }
                 }
             }
-            unsafe {
-                *x_of.get_unchecked_mut(i) = idx;
+        }
+        u_1.iter().all(|bits| *bits != 0).then(|| {
+            for (i, (u_i, u_1_i)) in u.iter().zip(u_1.iter()).enumerate() {
+                if u_i != u_1_i {
+                    let idx = indices[i];
+                    data[idx] = *u_1_i;
+                    queue.push_back(idx);
+                }
             }
-            return true;
+            Some(())
+        })?
+    }
+
+    fn dfs(u: &[Bits; N2], idx: usize, x_of: &mut [usize; N2], mut vis: Bits) -> bool {
+        vis |= 1 << idx;
+        let u_i = u[idx]; /* unsafe { *u.get_unchecked(idx) }; */
+        for i in 0..N2 {
+            /* unsafe { *x_of.get_unchecked(i) } */
+            if u_i & (1 << i) != 0
+                && (x_of[i] != N2 || (vis & (1 << i) == 0 && dfs(u, i, x_of, vis)))
+            {
+                x_of[i] = idx; /* unsafe { *x_of.get_unchecked_mut(i) = idx; } */
+                return true;
+            }
         }
         false
     }
 
-    pub fn kuhn(u: &[Bits; N2]) -> Option<[usize; N2]> {
+    fn kuhn(u: &[Bits; N2]) -> Option<[usize; N2]> {
         let mut x_of = [N2; N2];
         dfs(&u, 0, &mut x_of, 0);
         dfs(&u, 1, &mut x_of, 0);
@@ -153,9 +204,10 @@ mod core {
         x_of.iter().all(|z| *z != N2).then(|| {
             let mut y_of = [0usize; N2];
             for (i, z) in x_of.iter().enumerate() {
-                unsafe {
+                /* unsafe {
                     *y_of.get_unchecked_mut(*z) = i;
-                }
+                } */
+                y_of[*z] = i;
             }
             y_of
         })
@@ -163,8 +215,11 @@ mod core {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut sudoku = match env::args().skip(1).next() {
-        Some(s) => s,
+    let sudoku = match env::args().skip(1).next() {
+        Some(s) => {
+            println!("Sudoku received.");
+            s
+        }
         None => {
             let mut stdin = io::stdin();
             let mut buf = String::new();
