@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::env;
-use std::io;
-use std::io::Read;
+use std::fmt::{self, Display};
+use std::io::{self, Read};
 use std::str::FromStr;
 
 use strum::EnumCount;
@@ -39,6 +39,30 @@ impl FromStr for Sudoku {
     }
 }
 
+impl Display for Sudoku {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for chunk in self.0.chunks_exact(N2) {
+            let s = chunk
+                .iter()
+                .map(|mask| match mask {
+                    1 => '1',
+                    2 => '2',
+                    4 => '3',
+                    8 => '4',
+                    16 => '5',
+                    32 => '6',
+                    64 => '7',
+                    128 => '8',
+                    256 => '9',
+                    _ => '.',
+                })
+                .collect::<String>();
+            writeln!(f, "{}", s)?;
+        }
+        Ok(())
+    }
+}
+
 impl Sudoku {
     fn set(&mut self, idx: usize, digit: usize) -> Option<()> {
         let bit = 1 << digit;
@@ -65,22 +89,24 @@ impl Sudoku {
         Some(sudoku)
     }
 
-    pub fn solve(&self) -> Option<Sudoku> {
-        self.0
-            .iter()
-            .enumerate()
-            .find(|(_, val)| val.next_power_of_two() != **val)
-            .and_then(|(idx, val)| {
-                (0..N2)
+    pub fn backtrack(self) -> Option<Sudoku> {
+        for (idx, val) in self.0.iter().enumerate() {
+            if *val == 0 {
+                return None;
+            }
+            if val.next_power_of_two() != *val {
+                return (0..N2)
                     .filter_map(|i| {
                         (val & (1 << i) != 0).then(|| {
                             let mut clone = self.clone();
                             clone.set(idx, i)?;
-                            clone.solve()
+                            clone.backtrack()
                         })?
                     })
-                    .next()
-            })
+                    .next();
+            }
+        }
+        Some(self)
     }
 }
 
@@ -159,9 +185,6 @@ mod core {
                         for (y, x) in x_of.iter().enumerate() {
                             u_1[*x] |= 1 << y;
                         }
-                        println!("Ok  {:?} has {:?}", u_p, y_of(&x_of));
-                    } else {
-                        println!("Err {:?}", u_p);
                     }
                 }
             }
@@ -223,10 +246,7 @@ mod core {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sudoku = match env::args().skip(1).next() {
-        Some(s) => {
-            println!("Sudoku received.");
-            s
-        }
+        Some(s) => s,
         None => {
             let mut stdin = io::stdin();
             let mut buf = String::new();
@@ -236,6 +256,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     .parse::<Sudoku>()?;
-    println!("{:?}", sudoku.solve());
+    if let Some(solved) = sudoku.backtrack() {
+        println!("{}", solved);
+    }
     Ok(())
 }
