@@ -33,8 +33,8 @@ impl FromStr for Sudoku {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let iter = s.bytes().filter_map(|chr| match chr {
-            b'.' => Some(0),
-            x @ (b'1'..=b'9') => Some(x - b'0'),
+            b'.' => Some(N2),
+            x @ (b'1'..=b'9') => Some((x - b'1') as usize),
             _ => None,
         });
         Sudoku::new(iter).ok_or(NoSolutionError)
@@ -75,11 +75,11 @@ impl Sudoku {
         })?
     }
 
-    pub fn new(it: impl Iterator<Item = u8>) -> Option<Self> {
+    pub fn new(it: impl Iterator<Item = usize>) -> Option<Self> {
         let mut sudoku = Sudoku([ALL_BITS; N4]);
-        for (idx, chr) in it.enumerate() {
-            if chr != b'0' {
-                sudoku.set(idx, (chr - b'1') as usize)?;
+        for (idx, x) in it.enumerate() {
+            if x != N2 {
+                sudoku.set(idx, x)?;
             }
         }
         Some(sudoku)
