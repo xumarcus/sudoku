@@ -148,14 +148,6 @@ mod core {
 
     // No generic parameter: RFC 2000 #44580
     pub fn from_indices<T: Copy + Default>(buf: &[T], indices: &[usize; N2]) -> [T; N2] {
-        // Skip frequent bound-checking
-        /* unsafe {
-            let mut new_buf: [T; N2] = std::mem::zeroed();
-            for (i, idx) in indices.iter().enumerate() {
-                *new_buf.get_unchecked_mut(i) = *buf.get_unchecked(*idx);
-            }
-            new_buf
-        } */
         let mut new_buf = [T::default(); N2];
         for (i, idx) in indices.iter().enumerate() {
             new_buf[i] = buf[*idx];
@@ -198,9 +190,8 @@ mod core {
 
     fn dfs(u: &[Bits; N2], idx: usize, x_of: &mut [usize; N2], mut vis: Bits) -> bool {
         vis |= 1 << idx;
-        let u_i = u[idx]; /* unsafe { *u.get_unchecked(idx) }; */
+        let u_i = u[idx];
         for i in 0..N2 {
-            /* unsafe { *x_of.get_unchecked(i) } */
             if u_i & (1 << i) != 0 {
                 let x = x_of[i];
                 if x == N2 || (vis & (1 << x) == 0 && dfs(u, x, x_of, vis)) {
@@ -230,9 +221,6 @@ mod core {
     fn y_of(x_of: &[usize; N2]) -> [usize; N2] {
         let mut y_of = [0usize; N2];
         for (i, z) in x_of.iter().enumerate() {
-            /* unsafe {
-                *y_of.get_unchecked_mut(*z) = i;
-            } */
             y_of[*z] = i;
         }
         y_of
