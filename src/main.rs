@@ -6,47 +6,64 @@ use std::str::FromStr;
 
 use thiserror::Error;
 
+type Bits = usize;
+
 const N1: usize = 3;
 const N2: usize = N1 * N1;
 const N4: usize = N2 * N2;
+const ALL_BITS: Bits = (1 << N2) - 1;
 
 #[derive(Clone, Debug, Error)]
-#[error("81 digits expected")]
-struct SudokuError;
+#[error("No solution")]
+struct NoSolutionError;
 
 #[derive(Clone, Debug)]
 struct Sudoku([usize; N4]);
 
-type Bits = usize;
-
 impl FromStr for Sudoku {
-    type Err = SudokuError;
+    type Err = NoSolutionError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Sudoku::try_collect(
-            s.chars()
-                .filter(char::is_ascii_digit)
-                .take(N4)
-                .map(|d| d as u8),
-        )
+        let iter = s.chars().filter(char::is_ascii_digit).map(|d| d as u8);
+        Sudoku::new(iter).ok_or(NoSolutionError)
     }
 }
 
 impl Sudoku {
-    #[inline]
-    fn set(&mut self, idx: usize, digit: usize) -> Result<(), SudokuError> {
+    fn set(&mut self, idx: usize, digit: usize) -> Option<()> {
+        self.0[idx] = 1 << digit;
         
     }
 
-    fn try_collect(it: impl Iterator<Item = u8>) -> Result<Self, SudokuError> {
-        let mut sudoku = Sudoku([(1 << N2) - 1; N4]);
-        for (idx, digit) in it.enumerate() {
-            if digit != b'0' {
-                sudoku[idx] = 1 << (digit - b'0');
-                sudoku.enforce_GAC(idx)?;
+    pub fn new(it: impl Iterator<Item = u8>) -> Option<Self> {
+        let mut sudoku = Sudoku([ALL_BITS; N4]);
+        for (idx, chr) in it.enumerate() {
+            let digit = (chr - b'0') as usize;
+            if digit != 0 {
+                sudoku.set(idx, digit)?;
             }
         }
-        Ok(sudoku)
+        Some(sudoku)
+    }
+
+    pub fn solve(&self) -> Option<Sudoku> {
+        self.0
+            .iter()
+            .enumerate()
+            .find(|(_, val)| val.next_power_of_two() != **val)
+            .and_then(|(idx, val)| {
+                (0..N2)
+                    .filter_map(|i| {
+                        (val & (1 << i) != 0)
+                            .then(|| {
+                                let mut clone = self.clone();
+                                clone.set(idx, i)?;
+                                clone.solve()
+                            })
+                            .flatten()
+                    })
+                    .next()
+            })
     }
 }
 
@@ -92,28 +109,6 @@ fn kuhn(u: &[Bits; N2]) -> Option<[usize; N2]> {
     })
 }
 
-// In theory with GAC BT should be less often
-fn solve(sudoku: Sudoku) -> Option<Sudoku> {
-    sudoku
-        .0
-        .iter()
-        .enumerate()
-        .find(|(_, val)| val.next_power_of_two() != **val)
-        .and_then(|(idx, val)| {
-            (0..N2)
-                .filter_map(|i| {
-                    // Workaround
-                    (val & (1 << i) != 0).then(|| ()).and_then(|_| {
-                        let mut cl = sudoku.clone();
-                        cl.0[idx] = 1 << i;
-                        enforce_GAC(&mut cl, idx);
-                        solve(cl)
-                    })
-                })
-                .next()
-        })
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sudoku = match env::args().skip(1).next() {
         Some(s) => s,
@@ -126,8 +121,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     .parse::<Sudoku>()?;
-    for (idx, bits) in IntoIter::new(sudoku.0).enumerate() {
-        gac_enforce(&mut sudoku, idx);
-    }
+    println!("{:?}", sudoku.solve());
     Ok(())
 }
