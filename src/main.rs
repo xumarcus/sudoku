@@ -15,9 +15,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     .parse::<Sudoku>()?;
-    println!("Before backtracking:\n{}", sudoku);
     if let Some(solved) = sudoku.backtrack() {
-        println!("After backtracking:\n{}", solved);
+        println!("{}", solved);
     }
     Ok(())
 }
