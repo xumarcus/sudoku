@@ -113,6 +113,7 @@ mod core {
         let mut arcs = [[[0; N2]; N1]; N4];
         let mut blocks = [[0; N2]; N2];
         let mut i = 0;
+        
         while i < N1 {
             let mut j = 0;
             while j < N1 {
