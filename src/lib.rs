@@ -33,7 +33,7 @@ impl FromStr for Sudoku {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let iter = s.bytes().filter_map(|chr| match chr {
-            b'.' => Some(N2),
+            b'0' | b'.' => Some(N2),
             x @ (b'1'..=b'9') => Some((x - b'1') as usize),
             _ => None,
         });
