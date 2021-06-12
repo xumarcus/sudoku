@@ -1,10 +1,12 @@
-use std::collections::VecDeque;
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::convert::TryInto;
 use std::fmt::{self, Display};
 use std::str::{self, FromStr};
 
+use itertools::unfold;
 use thiserror::Error;
+
 #[derive(Clone, Debug, Error)]
 pub enum ParseSudokuError {
     #[error("Invalid character")]
@@ -35,6 +37,7 @@ pub struct Sudoku([u128; N2]);
 impl FromStr for Sudoku {
     type Err = ParseSudokuError;
 
+    #[rustfmt::skip]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let buf = s
             .bytes()
@@ -49,7 +52,7 @@ impl FromStr for Sudoku {
             Ordering::Less    => Err(ParseSudokuError::TooFewCharacters),
             Ordering::Greater => Err(ParseSudokuError::TooManyCharacters),
             Ordering::Equal   => {
-                let sudoku: [u128; N2] = buf
+                let sudoku = buf
                     .chunks_exact(N2)
                     .map(|chunk| chunk.iter().fold(0u128, |acc, x| (acc << N2) + x))
                     .collect::<Vec<u128>>()
@@ -63,10 +66,13 @@ impl FromStr for Sudoku {
 
 impl Display for Sudoku {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for mut row in self.0.iter().cloned() {
-            for _ in 0..N2 {
-                write!(f, "{}", (row & ROW_HEAD).count_ones())?;
-                row >>= N2;
+        for row in self.0.iter() {
+            for cell in core::iter_row(*row) {
+                let byte = match core::log2(cell) {
+                    Some(x) => (x as u8) + b'1',
+                    None => b'.',
+                };
+                write!(f, "{}", byte)?;
             }
             write!(f, "\n")?;
         }
@@ -75,30 +81,73 @@ impl Display for Sudoku {
 }
 
 impl Sudoku {
-    pub fn solve(&self) -> Option<Self> {
+    pub fn solve(self) -> Option<Self> {
         self.solutions().next()
     }
 
-    pub fn solutions(&self) -> SudokuSolutions {
-        SudokuSolutions(self.clone())
+    pub fn solutions(self) -> Box<dyn Iterator<Item = Sudoku>> {
+        // make consistent
+        self.solutions_from_consistent()
     }
 
     pub fn generate() -> Self {
         unimplemented!()
     }
-}
 
-#[derive(Clone, Debug)]
-struct SudokuSolutions(Sudoku);
+    fn iter(&self) -> impl Iterator<Item = u128> + '_ {
+        self.0.iter().cloned().map(core::iter_row).flatten()
+    }
 
-impl Iterator for SudokuSolutions {
-    type Item = Sudoku;
-
-    fn next(&mut self) -> Option<Self::Item> {
-
+    fn solutions_from_consistent(self) -> Box<dyn Iterator<Item = Sudoku>> {
+        // debug assert consistent
+        if let Some((idx, bits, _)) = self
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, bits)| {
+                let cnt = bits.count_ones();
+                (cnt > 1).then(|| (idx, bits, cnt))
+            })
+            .min_by_key(|t| t.2)
+        {
+            Box::new(std::iter::once(self))
+        } else if self.iter().any(|bits| bits == 0) {
+            Box::new(std::iter::empty())
+        } else {
+            Box::new(std::iter::once(self))
+        }
     }
 }
 
+mod core {
+    use super::*;
+    pub fn iter_row(row: u128) -> impl Iterator<Item = u128> {
+        unfold(row, |st| {
+            let item = (*st & ROW_HEAD) >> (N4 - N2);
+            if item != 0 {
+                *st <<= N2;
+                return Some(item);
+            }
+            None
+        })
+    }
+
+    pub fn log2(cell: u128) -> Option<usize> {
+        match cell {
+            0x1 => Some(0),
+            0x10 => Some(1),
+            0x100 => Some(2),
+            0x1000 => Some(3),
+            0x10000 => Some(4),
+            0x100000 => Some(5),
+            0x1000000 => Some(6),
+            0x10000000 => Some(7),
+            0x100000000 => Some(8),
+            _ => None,
+        }
+    }
+}
+
+/*
 mod core {
     use super::*;
 
@@ -220,6 +269,7 @@ mod core {
         y_of
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {
@@ -347,6 +397,9 @@ mod tests {
 .9....4..
 "
         );
+    }
+}
+/*
         assert_eq!(
             sudoku.backtrack().unwrap().to_string(),
             "\
@@ -357,7 +410,7 @@ mod tests {
 369845721
 287169534
 521974368
-438526917
-796318452
 "
-       
+        );
+    }
+*/

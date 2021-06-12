@@ -21,7 +21,7 @@ Enter EOF (Ctrl + Z) once done.
         }
     }
     .parse::<Sudoku>()?;
-    if let Some(solved) = sudoku.backtrack() {
+    if let Some(solved) = sudoku.solve() {
         println!("{}", solved);
     }
     Ok(())
