@@ -29,7 +29,9 @@ const N1: usize = 3;
 const N2: usize = N1 * N1;
 const N4: usize = N2 * N2;
 const S9: u128 = 0x111111111;
-const ROW_HEAD: u128 = S9 << (N4 - N2);
+
+// Minimize interdependence
+const INITIAL_CONSTRAINT_INDICES: [usize; N2] = [0, 40, 80, 28, 68, 24, 56, 12, 52];
 
 #[derive(Clone, Debug)]
 pub struct Sudoku([u128; N2]);
@@ -54,7 +56,7 @@ impl FromStr for Sudoku {
             Ordering::Equal   => {
                 let sudoku = buf
                     .chunks_exact(N2)
-                    .map(|chunk| chunk.iter().fold(0u128, |acc, x| (acc << N2) + x))
+                    .map(|chunk| chunk.iter().rev().fold(0u128, |acc, x| (acc << N2) + x))
                     .collect::<Vec<u128>>()
                     .try_into()
                     .expect("Should have 9x u128s");
@@ -85,9 +87,13 @@ impl Sudoku {
         self.solutions().next()
     }
 
-    pub fn solutions(self) -> Box<dyn Iterator<Item = Sudoku>> {
-        // make consistent
-        self.solutions_from_consistent()
+    pub fn solutions(mut self) -> Box<dyn Iterator<Item = Sudoku>> {
+        let queue = INITIAL_CONSTRAINT_INDICES.iter().cloned().collect();
+        if !self.make_consistent(queue) {
+            Box::new(std::iter::empty())
+        } else {
+            self.solutions_from_consistent()
+        }
     }
 
     pub fn generate() -> Self {
@@ -95,11 +101,11 @@ impl Sudoku {
     }
 
     fn iter(&self) -> impl Iterator<Item = u128> + '_ {
-        self.0.iter().cloned().map(core::iter_row).flatten()
+        self.0.iter().cloned().flat_map(core::iter_row)
     }
 
+    // Boxing to prevent recursive opaque type
     fn solutions_from_consistent(self) -> Box<dyn Iterator<Item = Sudoku>> {
-        // debug assert consistent
         if let Some((idx, bits, _)) = self
             .iter()
             .enumerate()
@@ -109,11 +115,27 @@ impl Sudoku {
             })
             .min_by_key(|t| t.2)
         {
-            Box::new(std::iter::once(self))
-        } else if self.iter().any(|bits| bits == 0) {
-            Box::new(std::iter::empty())
+            // If guesses are minimal, just clone
+            Box::new(
+                core::iter_bits(bits)
+                    .filter_map(move |bit| {
+                        let mut cp = self.clone();
+                        let shl = N2 * (idx % N2);
+                        cp.0[idx / N2] &= (S9 << shl).wrapping_neg() | (bit << shl);
+                        let queue = std::iter::once(idx).collect();
+                        cp.make_consistent(queue)
+                            .then(|| cp.solutions_from_consistent())
+                    })
+                    .flatten(),
+            )
         } else {
             Box::new(std::iter::once(self))
+        }
+    }
+
+    fn make_consistent(&mut self, queue: VecDeque<usize>) -> bool {
+        while let Some(idx) = queue.pop_front() {
+            // iterate self & (S9 << N2 * idx % N2) -> u128)
         }
     }
 }
@@ -122,12 +144,22 @@ mod core {
     use super::*;
     pub fn iter_row(row: u128) -> impl Iterator<Item = u128> {
         unfold(row, |st| {
-            let item = (*st & ROW_HEAD) >> (N4 - N2);
-            if item != 0 {
-                *st <<= N2;
-                return Some(item);
-            }
-            None
+            // Special case?
+            (*st != 0).then(|| {
+                let item = *st & S9;
+                *st >>= N2;
+                item
+            })
+        })
+    }
+
+    pub fn iter_bits(bits: u128) -> impl Iterator<Item = u128> {
+        unfold(bits, |st| {
+            (*st != 0).then(|| {
+                let item = *st & st.wrapping_neg();
+                *st -= item;
+                item
+            })
         })
     }
 
@@ -412,5 +444,4 @@ mod tests {
 521974368
 "
         );
-    }
 */
