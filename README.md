@@ -7,10 +7,13 @@ implementation of Kuhn algorithm for maximum bipartite matching.
 # Benchmarks (R5 2600)
 - v0.1 on CodeGolf @ StackOverflow: ~750s
 
-# TODO
+# Further optimizations
 - Run pre-processing before enforcing GAC
 - Do not enforce twice on same constraints
-- Create new SudokuSolver struct and separate I/O | formatting
 - Iterate on LSBs wherever possible
-- SIMD/AVX512 Config/optimizations
+- SIMD/AVX512 Config
 - Profiling
+
+# TODO
+- Convert to U128
+- Separate I/O & formatting

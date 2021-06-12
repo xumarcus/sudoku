@@ -1,108 +1,101 @@
 use std::collections::VecDeque;
+use std::cmp::Ordering;
+use std::convert::TryInto;
 use std::fmt::{self, Display};
 use std::str::{self, FromStr};
 
-use strum::EnumCount;
 use thiserror::Error;
+#[derive(Clone, Debug, Error)]
+pub enum ParseSudokuError {
+    #[error("Invalid character")]
+    InvalidCharacter,
+    #[error("Too few characters")]
+    TooFewCharacters,
+    #[error("Too many characters")]
+    TooManyCharacters,
+}
 
-#[derive(strum_macros::EnumCount)]
+/*
 enum ConstraintType {
     Block,
     Row,
     Col,
 }
-
-type Bits = usize;
-type Arcs = [[[usize; N2]; ConstraintType::COUNT]; N4];
+*/
 
 const N1: usize = 3;
 const N2: usize = N1 * N1;
 const N4: usize = N2 * N2;
-const ALL_BITS: Bits = (1 << N2) - 1;
-const ARCS: Arcs = crate::core::arcs_init();
-
-#[derive(Clone, Debug, Error)]
-#[error("No solution")]
-pub struct NoSolutionError;
+const S9: u128 = 0x111111111;
+const ROW_HEAD: u128 = S9 << (N4 - N2);
 
 #[derive(Clone, Debug)]
-pub struct Sudoku([usize; N4]);
+pub struct Sudoku([u128; N2]);
 
 impl FromStr for Sudoku {
-    type Err = NoSolutionError;
+    type Err = ParseSudokuError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let iter = s.bytes().filter_map(|chr| match chr {
-            b'0' | b'.' => Some(N2),
-            x @ (b'1'..=b'9') => Some((x - b'1') as usize),
-            _ => None,
-        });
-        Sudoku::new(iter).ok_or(NoSolutionError)
+        let buf = s
+            .bytes()
+            .filter_map(|chr| match chr {
+                b' ' | b'\n'       => None,
+                x @ (b'1'..=b'9')  => Some(Ok(1 << (x - b'1'))),
+                b'0' | b'.' | b'_' => Some(Ok(0)),
+                _                  => Some(Err(ParseSudokuError::InvalidCharacter)),
+            })
+            .collect::<Result<Vec<u128>, Self::Err>>()?;
+        match buf.len().cmp(&N4) {
+            Ordering::Less    => Err(ParseSudokuError::TooFewCharacters),
+            Ordering::Greater => Err(ParseSudokuError::TooManyCharacters),
+            Ordering::Equal   => {
+                let sudoku: [u128; N2] = buf
+                    .chunks_exact(N2)
+                    .map(|chunk| chunk.iter().fold(0u128, |acc, x| (acc << N2) + x))
+                    .collect::<Vec<u128>>()
+                    .try_into()
+                    .expect("Should have 9x u128s");
+                Ok(Sudoku(sudoku))
+            }
+        }
     }
 }
 
 impl Display for Sudoku {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for chunk in self.0.chunks_exact(N2) {
-            let buf = chunk
-                .iter()
-                .map(|val| match val {
-                    0 => unreachable!(),
-                    bit if bit.next_power_of_two() == *bit => b'1' + bit.trailing_zeros() as u8,
-                    _ => b'.',
-                })
-                .collect::<Vec<u8>>();
-            if let Ok(s) = str::from_utf8(&buf) {
-                writeln!(f, "{}", s)?;
+        for mut row in self.0.iter().cloned() {
+            for _ in 0..N2 {
+                write!(f, "{}", (row & ROW_HEAD).count_ones())?;
+                row >>= N2;
             }
+            write!(f, "\n")?;
         }
         Ok(())
     }
 }
 
 impl Sudoku {
-    fn set(&mut self, idx: usize, digit: usize) -> Option<()> {
-        let bit = 1 << digit;
-        (self.0[idx] & bit != 0).then(|| {
-            self.0[idx] = bit;
-            let mut queue = std::iter::once(idx).collect::<VecDeque<usize>>();
-            while let Some(cur) = queue.pop_front() {
-                for indices in ARCS[cur].iter() {
-                    crate::core::enforce(&mut self.0, indices, &mut queue)?;
-                }
-            }
-            Some(())
-        })?
+    pub fn solve(&self) -> Option<Self> {
+        self.solutions().next()
     }
 
-    pub fn new(it: impl Iterator<Item = usize>) -> Option<Self> {
-        let mut sudoku = Sudoku([ALL_BITS; N4]);
-        for (idx, x) in it.enumerate() {
-            if x != N2 {
-                sudoku.set(idx, x)?;
-            }
-        }
-        Some(sudoku)
+    pub fn solutions(&self) -> SudokuSolutions {
+        SudokuSolutions(self.clone())
     }
 
-    pub fn backtrack(self) -> Option<Sudoku> {
-        for (idx, val) in self.0.iter().enumerate() {
-            if *val == 0 {
-                return None;
-            }
-            if val.next_power_of_two() != *val {
-                return (0..N2)
-                    .filter_map(|i| {
-                        (val & (1 << i) != 0).then(|| {
-                            let mut clone = self.clone();
-                            clone.set(idx, i)?;
-                            clone.backtrack()
-                        })?
-                    })
-                    .next();
-            }
-        }
-        Some(self)
+    pub fn generate() -> Self {
+        unimplemented!()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SudokuSolutions(Sudoku);
+
+impl Iterator for SudokuSolutions {
+    type Item = Sudoku;
+
+    fn next(&mut self) -> Option<Self::Item> {
+
     }
 }
 
@@ -113,7 +106,6 @@ mod core {
         let mut arcs = [[[0; N2]; N1]; N4];
         let mut blocks = [[0; N2]; N2];
         let mut i = 0;
-        
         while i < N1 {
             let mut j = 0;
             while j < N1 {
@@ -368,6 +360,4 @@ mod tests {
 438526917
 796318452
 "
-        );
-    }
-}
+       
