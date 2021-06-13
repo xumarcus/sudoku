@@ -70,12 +70,15 @@ impl FromStr for Sudoku {
 impl Display for Sudoku {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for row in self.0.iter() {
-            for cell in core::RowIterator::new(*row) {
-                if cell.next_power_of_two() == cell {
-                    write!(f, "{}", (cell.trailing_zeros() as u8) + b'1')?;
-                } else {
-                    write!(f, ".")?;
-                }
+            for cell in core::ItemIterator::new(*row) {
+                let byte = match cell {
+                    0 => b'!',
+                    cell if cell.next_power_of_two() == cell => {
+                        (cell.trailing_zeros() as u8) + b'1'
+                    }
+                    _ => b'.',
+                };
+                write!(f, "{}", byte)?;
             }
             write!(f, "\n")?;
         }
@@ -83,7 +86,7 @@ impl Display for Sudoku {
     }
 }
 
-struct Backtrack {
+pub struct Backtrack {
     sudoku: Sudoku,
     idx: usize,
     iter: core::BitIterator,
@@ -116,8 +119,8 @@ impl Iterator for Backtrack {
     }
 }
 
-enum Solutions {
-    Multiple(std::iter::Flatten<Backtrack>),
+pub enum Solutions {
+    Multiple(Box<std::iter::Flatten<Backtrack>>),
     Single(std::iter::Once<Sudoku>),
 }
 
@@ -148,7 +151,10 @@ impl Sudoku {
     }
 
     fn iter(&self) -> impl Iterator<Item = u128> + '_ {
-        self.0.iter().cloned().flat_map(core::RowIterator::new)
+        self.0
+            .iter()
+            .cloned()
+            .flat_map(core::NonZeroItemIterator::new)
     }
 
     fn solutions_from_consistent(self) -> Solutions {
@@ -160,7 +166,7 @@ impl Sudoku {
             .min_by_key(|t| t.1 .1)
         {
             Some((idx, (bits, _))) => {
-                Solutions::Multiple(Backtrack::new(self, idx, bits).flatten())
+                Solutions::Multiple(Box::new(Backtrack::new(self, idx, bits).flatten()))
             }
             None => Solutions::Single(std::iter::once(self)),
         }
@@ -217,26 +223,27 @@ impl Sudoku {
         let mut matchings = 0;
         for idx in 0..N2 {
             let mask = S09 << (N2 * idx);
-            let domain = buf_ & mask;
-            core::BitIterator::new(domain)
-                .all(|bit| {
-                    if matchings & bit == 0 {
-                        let pruned = (buf_ & !mask) | bit;
-                        if let Some(matching) = core::kuhn(pruned) {
-                            matchings |= matching;
-                            return false;
-                        } else {
-                            buf_ &= !bit;
-                            return true;
-                        }
+            let selection = buf_ & mask;
+            let is_empty = core::BitIterator::new(selection).all(|bit| {
+                if matchings & bit == 0 {
+                    let pruned = (buf_ & !mask) | bit;
+                    if let Some(matching) = core::kuhn(pruned) {
+                        matchings |= matching;
+                    } else {
+                        buf_ &= !bit;
+                        return true;
                     }
-                })
-                .then(|| ())?;
+                }
+                false
+            });
+            if is_empty {
+                return None;
+            }
         }
         debug_assert_eq!(buf, matchings);
         Some(
             core::BitIterator::new(indices)
-                .zip(core::RowIterator::new(buf).zip(core::RowIterator::new(buf_)))
+                .zip(core::NonZeroItemIterator::new(buf).zip(core::NonZeroItemIterator::new(buf_)))
                 .filter_map(|(bit, (row, row_))| (row != row_).then(|| bit))
                 .sum::<u128>(),
         )
@@ -246,23 +253,47 @@ impl Sudoku {
 mod core {
     use super::*;
 
-    pub struct RowIterator {
+    pub struct NonZeroItemIterator {
         st: u128,
     }
 
-    impl RowIterator {
+    impl NonZeroItemIterator {
         pub fn new(st: u128) -> Self {
             Self { st }
         }
     }
 
-    impl Iterator for RowIterator {
+    impl Iterator for NonZeroItemIterator {
         type Item = u128;
 
         fn next(&mut self) -> Option<Self::Item> {
             (self.st != 0).then(|| {
                 let item = self.st & S09;
                 self.st >>= N2;
+                item
+            })
+        }
+    }
+
+    pub struct ItemIterator {
+        st: u128,
+        count: usize,
+    }
+
+    impl ItemIterator {
+        pub fn new(st: u128) -> Self {
+            Self { st, count: N2 }
+        }
+    }
+
+    impl Iterator for ItemIterator {
+        type Item = u128;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            (self.count != 0).then(|| {
+                let item = self.st & S09;
+                self.st >>= N2;
+                self.count -= 1;
                 item
             })
         }
@@ -289,93 +320,38 @@ mod core {
             })
         }
     }
-}
 
-/*
-mod core {
-    use super::*;
-
-    pub fn enforce(
-        data: &mut [Bits; N4],
-        indices: &[usize; N2],
-        queue: &mut VecDeque<usize>,
-    ) -> Option<()> {
-        let u_0 = from_indices(data, indices);
-        let mut u_1 = [0usize; N2];
-        for (i, z) in u_0.iter().enumerate() {
-            for k in 0..N2 {
-                let bit = 1 << k;
-                if u_1[i] & bit == 0 && z & bit != 0 {
-                    let mut u_p = u_0.clone();
-                    u_p[i] = bit;
-                    if let Some(x_of) = crate::core::kuhn(&u_p) {
-                        for (y, x) in x_of.iter().enumerate() {
-                            u_1[*x] |= 1 << y;
-                        }
-                    }
-                }
-            }
-        }
-        u_1.iter().all(|bits| *bits != 0).then(|| {
-            for (i, (u_0_i, u_1_i)) in u_0.iter().zip(u_1.iter()).enumerate() {
-                if u_0_i != u_1_i {
-                    let idx = indices[i];
-                    data[idx] = *u_1_i;
-                    queue.push_back(idx);
-                }
-            }
-            Some(())
-        })?
-    }
-
-    // No generic parameter: RFC 2000 #44580
-    fn from_indices<T: Copy + Default>(buf: &[T], indices: &[usize; N2]) -> [T; N2] {
-        let mut new_buf = [T::default(); N2];
-        for (i, idx) in indices.iter().enumerate() {
-            new_buf[i] = buf[*idx];
-        }
-        new_buf
-    }
-
-    fn dfs(u: &[Bits; N2], idx: usize, x_of: &mut [usize; N2], mut vis: Bits) -> bool {
-        vis |= 1 << idx;
-        let u_i = u[idx];
-        for i in 0..N2 {
-            if u_i & (1 << i) != 0 {
-                let x = x_of[i];
-                if x == N2 || (vis & (1 << x) == 0 && dfs(u, x, x_of, vis)) {
-                    x_of[i] = idx;
-                    return true;
-                }
+    fn dfs(buf: u128, vis: u128, idx: usize, rev_matching: &mut u128) -> bool {
+        let u9_domain = (buf >> (N2 * idx)) & S09;
+        for bit in core::BitIterator::new(u9_domain) {
+            let pos = bit.trailing_zeros() as usize;
+            let u9_rm = (*rev_matching >> (N2 * pos)) & S09;
+            if u9_rm == 0 || (u9_rm & vis == 0 && dfs(buf, vis | (1 << idx), pos, rev_matching)) {
+                *rev_matching &= !(S09 << (N2 * pos));
+                *rev_matching |= bit << (N2 * pos);
+                return true;
             }
         }
         false
     }
 
-    fn kuhn(u: &[Bits; N2]) -> Option<[usize; N2]> {
-        let mut x_of = [N2; N2];
-        dfs(&u, 0, &mut x_of, 0);
-        dfs(&u, 1, &mut x_of, 0);
-        dfs(&u, 2, &mut x_of, 0);
-        dfs(&u, 3, &mut x_of, 0);
-        dfs(&u, 4, &mut x_of, 0);
-        dfs(&u, 5, &mut x_of, 0);
-        dfs(&u, 6, &mut x_of, 0);
-        dfs(&u, 7, &mut x_of, 0);
-        dfs(&u, 8, &mut x_of, 0);
-        Some(x_of).filter(|x| x.iter().all(|z| *z != N2))
-    }
-
-    #[allow(dead_code)]
-    fn y_of(x_of: &[usize; N2]) -> [usize; N2] {
-        let mut y_of = [0usize; N2];
-        for (i, z) in x_of.iter().enumerate() {
-            y_of[*z] = i;
+    pub fn kuhn(buf: u128) -> Option<u128> {
+        let mut rev_matching = 0;
+        for idx in 0..N2 {
+            dfs(buf, 0, idx, &mut rev_matching);
         }
-        y_of
+        let mut matching = 0;
+        for (idx, bit) in core::ItemIterator::new(rev_matching).enumerate() {
+            if bit != 0 {
+                let pos = bit.trailing_zeros() as usize;
+                matching |= 1 << (idx + N2 * pos);
+            } else {
+                return None;
+            }
+        }
+        Some(matching)
     }
 }
-*/
 
 #[cfg(test)]
 mod tests {
@@ -397,7 +373,7 @@ mod tests {
         .parse()
         .unwrap();
         assert_eq!(
-            sudoku.to_string(),
+            sudoku.solve().unwrap().to_string(),
             "\
 926718345
 473562891
@@ -428,7 +404,7 @@ mod tests {
         .parse()
         .unwrap();
         assert_eq!(
-            sudoku.to_string(),
+            sudoku.solve().unwrap().to_string(),
             "\
 697245831
 513689247
@@ -459,7 +435,7 @@ mod tests {
         .parse()
         .unwrap();
         assert_eq!(
-            sudoku.to_string(),
+            sudoku.solve().unwrap().to_string(),
             "\
 264715839
 137892645
@@ -490,7 +466,7 @@ mod tests {
         .parse()
         .unwrap();
         assert_eq!(
-            sudoku.to_string(),
+            sudoku.solve().unwrap().to_string(),
             "\
 8........
 ..36.....

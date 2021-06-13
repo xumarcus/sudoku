@@ -24,11 +24,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for line in lines.take(n) {
         let line = line?;
         let sudoku = line.parse::<Sudoku>()?;
-        if let Some(solution) = sudoku.backtrack() {
+        if let Some(solution) = sudoku.solve() {
             let sol = solution
                 .to_string()
                 .chars()
-                .filter(|x| *x != '\n')
+                .cloned()
+                .filter(|x| x != '\n')
                 .collect::<String>();
             writeln!(stdout, "{},{}", line, sol)?;
         }
