@@ -11,4 +11,3 @@ name = "codegolf"
 
 [dependencies]
 thiserror = "1.0"
-itertools = "0.10"

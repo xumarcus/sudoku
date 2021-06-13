@@ -1,10 +1,8 @@
 use std::cmp::Ordering;
-use std::collections::VecDeque;
 use std::convert::TryInto;
 use std::fmt::{self, Display};
 use std::str::{self, FromStr};
 
-use itertools::unfold;
 use thiserror::Error;
 
 #[derive(Clone, Debug, Error)]
@@ -13,8 +11,8 @@ pub enum ParseSudokuError {
     InvalidCharacter,
     #[error("Too few characters")]
     TooFewCharacters,
-    #[error("Too many characters")]
-    TooManyCharacters,
+    #[error("Too Multiple characters")]
+    TooMultipleCharacters,
 }
 
 /*
@@ -27,11 +25,11 @@ enum ConstraintType {
 
 const N1: usize = 3;
 const N2: usize = N1 * N1;
+const N3: usize = N1 * N2;
 const N4: usize = N2 * N2;
-const S9: u128 = 0x111111111;
-
-// Minimize interdependence
-const INITIAL_CONSTRAINT_INDICES: [usize; N2] = [0, 40, 80, 28, 68, 24, 56, 12, 52];
+const S09: u128 = 1 << N2 - 1;
+const S27: u128 = 1 << N3 - 1;
+const ALL_CONSTRAINTS: u128 = 0x100100110010011001001;
 
 #[derive(Clone, Debug)]
 pub struct Sudoku([u128; N2]);
@@ -52,7 +50,7 @@ impl FromStr for Sudoku {
             .collect::<Result<Vec<u128>, Self::Err>>()?;
         match buf.len().cmp(&N4) {
             Ordering::Less    => Err(ParseSudokuError::TooFewCharacters),
-            Ordering::Greater => Err(ParseSudokuError::TooManyCharacters),
+            Ordering::Greater => Err(ParseSudokuError::TooMultipleCharacters),
             Ordering::Equal   => {
                 let sudoku = buf
                     .chunks_exact(N2)
@@ -69,12 +67,12 @@ impl FromStr for Sudoku {
 impl Display for Sudoku {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for row in self.0.iter() {
-            for cell in core::iter_row(*row) {
-                let byte = match core::log2(cell) {
-                    Some(x) => (x as u8) + b'1',
-                    None => b'.',
-                };
-                write!(f, "{}", byte)?;
+            for cell in core::RowIterator::new(*row) {
+                if cell.next_power_of_two() == cell {
+                    write!(f, "{}", (cell.trailing_zeros() as u8) + b'1')?;
+                } else {
+                    write!(f, ".")?;
+                }
             }
             write!(f, "\n")?;
         }
@@ -82,18 +80,59 @@ impl Display for Sudoku {
     }
 }
 
+struct Backtrack {
+    sudoku: Sudoku,
+    idx: usize,
+    iter: core::BitIterator
+}
+
+impl Backtrack {
+    fn new(sudoku: Sudoku, idx: usize) -> Self {
+        Self { sudoku, idx, iter: core::BitIterator::new(sudoku.0[idx]) }
+    }
+}
+
+impl Iterator for Backtrack {
+    type Item = Solutions;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(bit) = self.iter.next() {
+            let mut cp = self.sudoku.clone();
+            let shl = N2 * (self.idx % N2);
+            cp.0[self.idx / N2] &= !(S09 << shl);
+            cp.0[self.idx / N2] |= bit << shl;
+            if let Some(_) = cp.make_consistent(1u128 << self.idx) {
+                return Some(cp.solutions_from_consistent());
+            }
+        }
+        None
+    }
+}
+
+enum Solutions {
+    Multiple(std::iter::Flatten<Backtrack>),
+    Single(std::iter::Once<Sudoku>),
+}
+
+impl Iterator for Solutions {
+    type Item = Sudoku;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Multiple(iter) => iter.next(),
+            Self::Single(iter) => iter.next(),
+        }
+    }
+}
+
 impl Sudoku {
     pub fn solve(self) -> Option<Self> {
-        self.solutions().next()
+        self.solutions().as_mut().and_then(Solutions::next)
     }
 
-    pub fn solutions(mut self) -> Box<dyn Iterator<Item = Sudoku>> {
-        let queue = INITIAL_CONSTRAINT_INDICES.iter().cloned().collect();
-        if !self.make_consistent(queue) {
-            Box::new(std::iter::empty())
-        } else {
-            self.solutions_from_consistent()
-        }
+    // Returns none if no solution without guessing
+    pub fn solutions(mut self) -> Option<Solutions> {
+        self.make_consistent(ALL_CONSTRAINTS).map(|_| self.solutions_from_consistent())
     }
 
     pub fn generate() -> Self {
@@ -101,80 +140,112 @@ impl Sudoku {
     }
 
     fn iter(&self) -> impl Iterator<Item = u128> + '_ {
-        self.0.iter().cloned().flat_map(core::iter_row)
+        self.0.iter().cloned().flat_map(core::RowIterator::new)
     }
 
-    // Boxing to prevent recursive opaque type
-    fn solutions_from_consistent(self) -> Box<dyn Iterator<Item = Sudoku>> {
-        if let Some((idx, bits, _)) = self
+    fn solutions_from_consistent(self) -> Solutions {
+        match self
             .iter()
+            .map(|bits| bits.count_ones())
             .enumerate()
-            .filter_map(|(idx, bits)| {
-                let cnt = bits.count_ones();
-                (cnt > 1).then(|| (idx, bits, cnt))
-            })
-            .min_by_key(|t| t.2)
+            .filter(|t| t.1 > 1)
+            .min_by_key(|t| t.1)
+            .map(|t| t.0)
         {
-            // If guesses are minimal, just clone
-            Box::new(
-                core::iter_bits(bits)
-                    .filter_map(move |bit| {
-                        let mut cp = self.clone();
-                        let shl = N2 * (idx % N2);
-                        cp.0[idx / N2] &= (S9 << shl).wrapping_neg() | (bit << shl);
-                        let queue = std::iter::once(idx).collect();
-                        cp.make_consistent(queue)
-                            .then(|| cp.solutions_from_consistent())
-                    })
-                    .flatten(),
-            )
-        } else {
-            Box::new(std::iter::once(self))
+            Some(idx) => Solutions::Multiple(Backtrack::new(self, idx).flatten()),
+            None => Solutions::Single(std::iter::once(self))
         }
     }
 
-    fn make_consistent(&mut self, queue: VecDeque<usize>) -> bool {
-        while let Some(idx) = queue.pop_front() {
-            // iterate self & (S9 << N2 * idx % N2) -> u128)
+    fn make_consistent(&mut self, q: u128) -> Option<()> {
+        if q != 0 {
+            let mut q_ = 0;
+            for bit in core::BitIterator::new(q) {
+                let idx = bit.trailing_zeros() as usize;
+                q_ |= self.enforce_row(idx)?;
+                q_ |= self.enforce_col(idx)?;
+                q_ |= self.enforce_blk(idx)?;
+            }
+            self.make_consistent(q_)?;
         }
+        Some(())
+    }
+
+    fn enforce_row(&mut self, idx: usize) -> Option<u128> {
+        let row = self.0[idx / N2];
+        self.enforce(row, ROWS[idx])
+    }
+
+    fn enforce_col(&mut self, idx: usize) -> Option<u128> {
+        let shr = N2 * (idx % N2);
+        let col = self
+            .0
+            .iter()
+            .fold(0, |acc, x| (acc << N2) + (x >> shr) & S09);
+        self.enforce(col, COLS[idx])
+    }
+
+    fn enforce_blk(&mut self, idx: usize) -> Option<u128> {
+        let rix = idx / N2 - (idx / N2) % N1;
+        let shr = idx % N2 - (idx % N2) % N1;
+        let blk = self
+            .0
+            .get(rix..rix + N1)
+            .expect("Index is in range")
+            .iter()
+            .fold(0, |acc, x| (acc << N3) + (x >> shr) & S27);
+        self.enforce(blk, BLKS[idx])
+    }
+
+    fn enforce(&mut self, buf: u128, indices: u128) -> Option<u128> {
+
     }
 }
 
 mod core {
     use super::*;
-    pub fn iter_row(row: u128) -> impl Iterator<Item = u128> {
-        unfold(row, |st| {
-            // Special case?
-            (*st != 0).then(|| {
-                let item = *st & S9;
-                *st >>= N2;
-                item
-            })
-        })
+
+    pub struct RowIterator {
+        st: u128
     }
 
-    pub fn iter_bits(bits: u128) -> impl Iterator<Item = u128> {
-        unfold(bits, |st| {
-            (*st != 0).then(|| {
-                let item = *st & st.wrapping_neg();
-                *st -= item;
-                item
-            })
-        })
+    impl RowIterator {
+        pub fn new(st: u128) -> Self {
+            Self { st }
+        }
     }
 
-    pub fn log2(cell: u128) -> Option<usize> {
-        match cell {
-            0x1 => Some(0),
-            0x10 => Some(1),
-            0x100 => Some(2),
-            0x1000 => Some(3),
-            0x10000 => Some(4),
-            0x100000 => Some(5),
-            0x1000000 => Some(6),
-            0x10000000 => Some(7),
-            0x100000000 => Some(8),
-            _ => None,
+    impl Iterator for RowIterator {
+        type Item = u128;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            (self.st != 0).then(|| {
+                let item = self.st & S09;
+                self.st >>= N2;
+                item
+            })
+        }
+    }
+
+    pub struct BitIterator {
+        st: u128
+    }
+
+    impl BitIterator {
+        pub fn new(st: u128) -> Self {
+            Self { st }
+        }
+    }
+
+    impl Iterator for BitIterator {
+        type Item = u128;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            (self.st != 0).then(|| {
+                let item = self.st & self.st.wrapping_neg();
+                self.st -= item;
+                item
+            })
         }
     }
 }
@@ -429,19 +500,3 @@ mod tests {
 .9....4..
 "
         );
-    }
-}
-/*
-        assert_eq!(
-            sudoku.backtrack().unwrap().to_string(),
-            "\
-812753649
-943682175
-675491283
-154237896
-369845721
-287169534
-521974368
-"
-        );
-*/
