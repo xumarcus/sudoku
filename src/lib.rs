@@ -11,8 +11,8 @@ pub enum ParseSudokuError {
     InvalidCharacter,
     #[error("Too few characters")]
     TooFewCharacters,
-    #[error("Too Multiple characters")]
-    TooMultipleCharacters,
+    #[error("Too many characters")]
+    TooManyCharacters,
 }
 
 /*
@@ -29,7 +29,10 @@ const N3: usize = N1 * N2;
 const N4: usize = N2 * N2;
 const S09: u128 = 1 << N2 - 1;
 const S27: u128 = 1 << N3 - 1;
-const ALL_CONSTRAINTS: u128 = 0x100100110010011001001;
+const ROW_INDICES: u128 = S09; // Alias
+const COL_INDICES: u128 = 0x1008040201008040201;
+const BLK_INDICES: u128 = 0x1c0e07;
+const CONSTRAINT_INDICES: u128 = 0x100100110010011001001;
 
 #[derive(Clone, Debug)]
 pub struct Sudoku([u128; N2]);
@@ -50,7 +53,7 @@ impl FromStr for Sudoku {
             .collect::<Result<Vec<u128>, Self::Err>>()?;
         match buf.len().cmp(&N4) {
             Ordering::Less    => Err(ParseSudokuError::TooFewCharacters),
-            Ordering::Greater => Err(ParseSudokuError::TooMultipleCharacters),
+            Ordering::Greater => Err(ParseSudokuError::TooManyCharacters),
             Ordering::Equal   => {
                 let sudoku = buf
                     .chunks_exact(N2)
@@ -83,12 +86,16 @@ impl Display for Sudoku {
 struct Backtrack {
     sudoku: Sudoku,
     idx: usize,
-    iter: core::BitIterator
+    iter: core::BitIterator,
 }
 
 impl Backtrack {
-    fn new(sudoku: Sudoku, idx: usize) -> Self {
-        Self { sudoku, idx, iter: core::BitIterator::new(sudoku.0[idx]) }
+    fn new(sudoku: Sudoku, idx: usize, bits: u128) -> Self {
+        Self {
+            sudoku,
+            idx,
+            iter: core::BitIterator::new(bits),
+        }
     }
 }
 
@@ -132,7 +139,8 @@ impl Sudoku {
 
     // Returns none if no solution without guessing
     pub fn solutions(mut self) -> Option<Solutions> {
-        self.make_consistent(ALL_CONSTRAINTS).map(|_| self.solutions_from_consistent())
+        self.make_consistent(CONSTRAINT_INDICES)
+            .map(|_| self.solutions_from_consistent())
     }
 
     pub fn generate() -> Self {
@@ -146,14 +154,15 @@ impl Sudoku {
     fn solutions_from_consistent(self) -> Solutions {
         match self
             .iter()
-            .map(|bits| bits.count_ones())
+            .map(|bits| (bits, bits.count_ones()))
             .enumerate()
-            .filter(|t| t.1 > 1)
-            .min_by_key(|t| t.1)
-            .map(|t| t.0)
+            .filter(|t| t.1 .1 > 1)
+            .min_by_key(|t| t.1 .1)
         {
-            Some(idx) => Solutions::Multiple(Backtrack::new(self, idx).flatten()),
-            None => Solutions::Single(std::iter::once(self))
+            Some((idx, (bits, _))) => {
+                Solutions::Multiple(Backtrack::new(self, idx, bits).flatten())
+            }
+            None => Solutions::Single(std::iter::once(self)),
         }
     }
 
@@ -172,33 +181,65 @@ impl Sudoku {
     }
 
     fn enforce_row(&mut self, idx: usize) -> Option<u128> {
-        let row = self.0[idx / N2];
-        self.enforce(row, ROWS[idx])
+        let rix = idx / N2;
+        let row = self.0[rix];
+        self.enforce(row, ROW_INDICES << (N2 * rix))
     }
 
     fn enforce_col(&mut self, idx: usize) -> Option<u128> {
-        let shr = N2 * (idx % N2);
+        let cix = idx % N2;
+        let shr = N2 * cix;
         let col = self
             .0
             .iter()
+            .rev()
             .fold(0, |acc, x| (acc << N2) + (x >> shr) & S09);
-        self.enforce(col, COLS[idx])
+        self.enforce(col, COL_INDICES << cix)
     }
 
     fn enforce_blk(&mut self, idx: usize) -> Option<u128> {
-        let rix = idx / N2 - (idx / N2) % N1;
-        let shr = idx % N2 - (idx % N2) % N1;
+        let rbx = idx / N2 / N1;
+        let cbx = idx % N2 / N1;
+        let shr = N3 * cbx;
         let blk = self
             .0
-            .get(rix..rix + N1)
+            .get(rbx * N1..(rbx + 1) * N1)
             .expect("Index is in range")
             .iter()
+            .rev()
             .fold(0, |acc, x| (acc << N3) + (x >> shr) & S27);
-        self.enforce(blk, BLKS[idx])
+        self.enforce(blk, BLK_INDICES << N2 * (cbx + N1 * rbx))
     }
 
     fn enforce(&mut self, buf: u128, indices: u128) -> Option<u128> {
-
+        // Update buf online
+        let mut buf_ = buf;
+        let mut matchings = 0;
+        for idx in 0..N2 {
+            let mask = S09 << (N2 * idx);
+            let domain = buf_ & mask;
+            core::BitIterator::new(domain)
+                .all(|bit| {
+                    if matchings & bit == 0 {
+                        let pruned = (buf_ & !mask) | bit;
+                        if let Some(matching) = core::kuhn(pruned) {
+                            matchings |= matching;
+                            return false;
+                        } else {
+                            buf_ &= !bit;
+                            return true;
+                        }
+                    }
+                })
+                .then(|| ())?;
+        }
+        debug_assert_eq!(buf, matchings);
+        Some(
+            core::BitIterator::new(indices)
+                .zip(core::RowIterator::new(buf).zip(core::RowIterator::new(buf_)))
+                .filter_map(|(bit, (row, row_))| (row != row_).then(|| bit))
+                .sum::<u128>(),
+        )
     }
 }
 
@@ -206,7 +247,7 @@ mod core {
     use super::*;
 
     pub struct RowIterator {
-        st: u128
+        st: u128,
     }
 
     impl RowIterator {
@@ -228,7 +269,7 @@ mod core {
     }
 
     pub struct BitIterator {
-        st: u128
+        st: u128,
     }
 
     impl BitIterator {
@@ -253,44 +294,6 @@ mod core {
 /*
 mod core {
     use super::*;
-
-    pub const fn arcs_init() -> Arcs {
-        let mut arcs = [[[0; N2]; N1]; N4];
-        let mut blocks = [[0; N2]; N2];
-        let mut i = 0;
-        while i < N1 {
-            let mut j = 0;
-            while j < N1 {
-                let mut k = 0;
-                while k < N1 {
-                    let mut l = 0;
-                    while l < N1 {
-                        blocks[i * N1 + j][k * N1 + l] = (i * N2 + j) * N1 + k * N2 + l;
-                        l += 1;
-                    }
-                    k += 1;
-                }
-                j += 1;
-            }
-            i += 1;
-        }
-        let mut i = 0;
-        while i < N2 {
-            let mut j = 0;
-            while j < N2 {
-                arcs[i * N2 + j][ConstraintType::Block as usize] = blocks[(i % N1) * N1 + (j % N1)];
-                let mut k = 0;
-                while k < N2 {
-                    arcs[i * N2 + j][ConstraintType::Row as usize][k] = i * N2 + k;
-                    arcs[i * N2 + j][ConstraintType::Col as usize][k] = k * N2 + j;
-                    k += 1;
-                }
-                j += 1;
-            }
-            i += 1;
-        }
-        arcs
-    }
 
     pub fn enforce(
         data: &mut [Bits; N4],
@@ -499,4 +502,6 @@ mod tests {
 ..85...1.
 .9....4..
 "
-        );
+        )
+    }
+}
