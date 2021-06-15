@@ -28,8 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let sol = solution
                 .to_string()
                 .chars()
-                .cloned()
-                .filter(|x| x != '\n')
+                .filter(|x| *x != '\n')
                 .collect::<String>();
             writeln!(stdout, "{},{}", line, sol)?;
         }

@@ -9,11 +9,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => {
             let mut stdin = io::stdin();
             let mut buf = String::new();
-            println!(
+            print!(
                 "\
 Started in interactive mode.
 `.` for blanks.
 Enter EOF (Ctrl + Z) once done.
+
+Sudoku:
 "
             );
             stdin.read_to_string(&mut buf)?;

@@ -11,3 +11,7 @@ name = "codegolf"
 
 [dependencies]
 thiserror = "1.0"
+
+[dev-dependencies]
+quickcheck = "1"
+quickcheck_macros = "1"
